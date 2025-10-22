@@ -1,0 +1,73 @@
+services:
+  # PostgreSQL Database（僅內部使用，不對外開埠）
+  db:
+    image: postgres:15-alpine
+    container_name: r1l_rtm_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: requirement_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rtm_network
+    restart: unless-stopped
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile.prod
+    container_name: r1l_rtm_backend
+    environment:
+      # 內部用 db:5432 連線
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/requirement_db
+      # CORS：允許的來源（允許內網訪問）
+      CORS_ORIGINS: "*"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/data
+    networks:
+      - rtm_network
+    restart: unless-stopped
+
+  # Frontend (Vue.js) - Production build with Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile.prod
+    container_name: r1l_rtm_frontend
+    depends_on:
+      - backend
+    networks:
+      - rtm_network
+    restart: unless-stopped
+
+  # Reverse Proxy（唯一對外公開 80）
+  reverse-proxy:
+    image: nginx:alpine
+    container_name: r1l_rtm_reverse_proxy
+    depends_on:
+      - frontend
+      - backend
+    volumes:
+      - ./reverse-proxy/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "55688:80"
+    networks:
+      - rtm_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  rtm_network:
+    driver: bridge
