@@ -1,0 +1,41 @@
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.Python
+**/venv
+**/env
+**/ENV
+**/.venv
+
+# Node
+**/node_modules
+**/npm-debug.log
+**/yarn-error.log
+
+# Git
+**/.git
+**/.gitignore
+
+# IDE
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
+**/*~
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Docker
+**/.dockerignore
+**/Dockerfile*
+**/docker-compose*
+
+# Data and backups
+**/backups
+**/data
+**/*.sql
+**/*.sql.gz
