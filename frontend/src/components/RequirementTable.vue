@@ -172,24 +172,39 @@ export default {
         return
       }
 
-      const searchParams = new URLSearchParams()
-      searchParams.set('ids', Array.from(melcoIds).join(','))
+      const ids = Array.from(melcoIds)
 
       try {
-        const response = await fetch(`/api/sys2/availability?${searchParams.toString()}`)
+        let response = await fetch('/api/sys2/availability', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ ids })
+        })
+
+        if (!response.ok) {
+          // 後端若不支援 POST，退回舊的 GET 方式
+          if (response.status === 405 || response.status === 404) {
+            const searchParams = new URLSearchParams()
+            searchParams.set('ids', ids.join(','))
+            response = await fetch(`/api/sys2/availability?${searchParams.toString()}`)
+          }
+        }
+
         if (!response.ok) {
           throw new Error('Failed to load SYS.2 availability')
         }
 
         const data = await response.json()
         const availability = {}
-        melcoIds.forEach(id => {
+        ids.forEach(id => {
           availability[id] = data.available_ids.includes(id)
         })
         this.melcoIdAvailability = availability
       } catch (error) {
         const fallback = {}
-        melcoIds.forEach(id => {
+        ids.forEach(id => {
           fallback[id] = false
         })
         this.melcoIdAvailability = fallback

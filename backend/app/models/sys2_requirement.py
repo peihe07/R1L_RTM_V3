@@ -1,10 +1,14 @@
 """SYS.2 Requirement models."""
-from sqlalchemy import Column, String, DateTime, Integer, Text
-from sqlalchemy.sql import func
-from ..db.database import Base
-from pydantic import BaseModel
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy.orm import validates
+from sqlalchemy.sql import func
+
+from ..db.database import Base
+from ..utils.melco import normalize_melco_id
+from pydantic import BaseModel
 
 
 class SYS2RequirementDB(Base):
@@ -33,6 +37,11 @@ class SYS2RequirementDB(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    @validates("melco_id")
+    def _normalize_melco_id(self, _key, value):
+        """Ensure Melco IDs are stored in their canonical format."""
+        return normalize_melco_id(value)
 
 
 class SYS2Requirement(BaseModel):

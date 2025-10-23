@@ -11,6 +11,7 @@ from typing import List, Dict, Tuple
 
 from app.db.database import engine, SessionLocal, Base
 from app.models.sys2_requirement import SYS2RequirementDB, SYS2Requirement
+from app.utils.melco import normalize_melco_id
 
 
 class SYS2Importer:
@@ -49,7 +50,8 @@ class SYS2Importer:
                 # Get Melco ID - support both English and Japanese column names
                 melco_id = row.get('Melco Id', row.get('要件ID', ''))
                 melco_id = str(melco_id).strip() if pd.notna(melco_id) else ''
-                if not melco_id or melco_id == 'nan':
+                melco_id = normalize_melco_id(melco_id)
+                if not melco_id or melco_id.lower() == 'nan':
                     continue  # Skip rows without Melco ID
 
                 # Extract CFTS ID from Melco ID (e.g., PSCFTS069-1-2-1 -> CFTS069)

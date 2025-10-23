@@ -1,13 +1,15 @@
 """SYS.2 requirement API endpoints."""
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..db.database import get_db
 from ..models.cfts_db import CFTSRequirementDB
 from ..models.sys2_requirement import SYS2RequirementDB, SYS2Requirement
+from ..utils.melco import generate_melco_variants, normalize_melco_id
 
 router = APIRouter(prefix="/sys2", tags=["sys2"])
 
@@ -15,6 +17,15 @@ router = APIRouter(prefix="/sys2", tags=["sys2"])
 class SYS2AvailabilityResponse(BaseModel):
     """Response model for Melco ID availability lookups."""
     available_ids: List[str]
+
+
+class SYS2AvailabilityRequest(BaseModel):
+    """Request body for Melco ID availability lookups."""
+    ids: Sequence[str] = Field(
+        default_factory=list,
+        description="Melco ID 列表",
+        min_length=1,
+    )
 
 
 def _build_cfts_lookup(db: Session, cfts_ids: List[str]) -> Dict[str, str]:
@@ -41,6 +52,40 @@ def _to_pydantic(record: SYS2RequirementDB, cfts_lookup: Dict[str, str]) -> SYS2
     return requirement
 
 
+def _availability_lookup(ids: Iterable[str], db: Session) -> SYS2AvailabilityResponse:
+    """Core availability lookup that accepts any iterable of Melco IDs."""
+    unique_ids = [item for item in dict.fromkeys(normalize_melco_id(value) for value in ids if value)]
+
+    if not unique_ids:
+        return SYS2AvailabilityResponse(available_ids=[])
+
+    variant_pool: Set[str] = set()
+    for melco_id in unique_ids:
+        variant_pool.update(generate_melco_variants(melco_id))
+
+    if not variant_pool:
+        return SYS2AvailabilityResponse(available_ids=[])
+
+    rows = (
+        db.query(SYS2RequirementDB.melco_id)
+        .filter(SYS2RequirementDB.melco_id.in_(variant_pool))
+        .distinct()
+        .all()
+    )
+
+    available_normalized = {
+        normalize_melco_id(row_melco_id) for (row_melco_id,) in rows if row_melco_id
+    }
+
+    available = [
+        melco_id
+        for melco_id in unique_ids
+        if melco_id and melco_id in available_normalized
+    ]
+
+    return SYS2AvailabilityResponse(available_ids=list(dict.fromkeys(available)))
+
+
 @router.get(
     "/requirement/{melco_id}",
     response_model=List[SYS2Requirement],
@@ -48,9 +93,16 @@ def _to_pydantic(record: SYS2RequirementDB, cfts_lookup: Dict[str, str]) -> SYS2
 )
 def get_sys2_by_melco_id(melco_id: str, db: Session = Depends(get_db)) -> List[SYS2Requirement]:
     """Return SYS.2 requirements associated with a specific Melco ID."""
+    normalized_id = normalize_melco_id(melco_id)
+    variants: Set[str] = generate_melco_variants(melco_id)
+    variants.update(generate_melco_variants(normalized_id))
+
+    if not variants:
+        raise HTTPException(status_code=404, detail="SYS.2 requirement not found")
+
     records = (
         db.query(SYS2RequirementDB)
-        .filter(SYS2RequirementDB.melco_id == melco_id)
+        .filter(SYS2RequirementDB.melco_id.in_(variants))
         .order_by(SYS2RequirementDB.id.asc())
         .all()
     )
@@ -83,7 +135,17 @@ def search_sys2_requirements(
         query = query.filter(SYS2RequirementDB.cfts_id.ilike(f"{cfts_id}%"))
 
     if melco_id:
-        query = query.filter(SYS2RequirementDB.melco_id.ilike(f"{melco_id}%"))
+        normalized_id = normalize_melco_id(melco_id)
+        conditions = [SYS2RequirementDB.melco_id.ilike(f"{melco_id}%")]
+        if normalized_id and normalized_id != melco_id:
+            conditions.extend(
+                [
+                    SYS2RequirementDB.melco_id.ilike(f"{normalized_id}%"),
+                    SYS2RequirementDB.melco_id.ilike(f"#{normalized_id}%"),
+                    SYS2RequirementDB.melco_id.ilike(f"##{normalized_id}%"),
+                ]
+            )
+        query = query.filter(or_(*conditions))
 
     records = query.order_by(SYS2RequirementDB.melco_id.asc()).limit(limit).all()
 
@@ -110,20 +172,19 @@ def check_sys2_availability(
     ),
     db: Session = Depends(get_db),
 ) -> SYS2AvailabilityResponse:
-    """Batch check which Melco IDs have SYS.2 requirements."""
-    # 解析輸入，過濾空白與重複
+    """Batch check which Melco IDs have SYS.2 requirements (query-string version)."""
     raw_ids = [item.strip() for item in ids.split(",") if item.strip()]
-    unique_ids = list(dict.fromkeys(raw_ids))  # 保留順序且去重
+    return _availability_lookup(raw_ids, db)
 
-    if not unique_ids:
-        return SYS2AvailabilityResponse(available_ids=[])
 
-    rows = (
-        db.query(SYS2RequirementDB.melco_id)
-        .filter(SYS2RequirementDB.melco_id.in_(unique_ids))
-        .distinct()
-        .all()
-    )
-
-    available = [melco_id for (melco_id,) in rows]
-    return SYS2AvailabilityResponse(available_ids=available)
+@router.post(
+    "/availability",
+    response_model=SYS2AvailabilityResponse,
+    summary="檢查多個 Melco ID 是否存在 SYS.2 資料 (POST)",
+)
+def check_sys2_availability_post(
+    payload: SYS2AvailabilityRequest,
+    db: Session = Depends(get_db),
+) -> SYS2AvailabilityResponse:
+    """Batch check which Melco IDs have SYS.2 requirements (JSON body)."""
+    return _availability_lookup(payload.ids, db)
